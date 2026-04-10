@@ -1,0 +1,180 @@
+﻿.panel {
+  width: 320px;
+  min-width: 320px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, #151824 0%, #10131c 100%);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px;
+}
+
+.brand {
+  margin-bottom: 18px;
+}
+
+.brandTag {
+  margin: 0;
+  color: #8f9bb9;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.brandTitle {
+  margin: 4px 0 0;
+  color: #f6f8ff;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.newChatButton {
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #7ea5ff 0%, #9dc7ff 100%);
+  color: #0b1428;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 10px 12px;
+  cursor: pointer;
+  margin-bottom: 14px;
+}
+
+.listTitle {
+  margin: 10px 0 10px;
+  color: #b8c2dd;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.agentList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.agentItem {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #f6f8ff;
+  text-align: left;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.agentItemSelected {
+  border-color: #90b7ff;
+  background: rgba(118, 155, 255, 0.2);
+}
+
+.agentName {
+  margin: 0 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.agentDescription {
+  margin: 0;
+  color: #a8b3cf;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.contextMenu {
+  position: fixed;
+  z-index: 60;
+  min-width: 140px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  background: #111725;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  padding: 6px;
+}
+
+.contextMenuItemDanger {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 107, 107, 0.14);
+  color: #ff9f9f;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.modalMask {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(5, 8, 14, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal {
+  width: min(460px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: #0f1422;
+  padding: 18px;
+}
+
+.modalTitle {
+  margin: 0 0 8px;
+  color: #f5f8ff;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modalText {
+  margin: 0;
+  color: #bdc9e6;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.modalActions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.modalSecondaryButton {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: transparent;
+  color: #d1daf0;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.modalDangerButton {
+  border: none;
+  border-radius: 10px;
+  background: #f06262;
+  color: #1d0707;
+  font-weight: 600;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.modalDangerButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .panel {
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}

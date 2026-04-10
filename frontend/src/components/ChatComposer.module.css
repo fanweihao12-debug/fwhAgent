@@ -1,0 +1,50 @@
+.composerWrap {
+  padding: 16px 0 8px;
+}
+
+.composer {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  background: rgba(9, 13, 23, 0.8);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 10px;
+}
+
+.input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #f7f9ff;
+  min-height: 48px;
+  max-height: 180px;
+  resize: none;
+  padding: 8px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.input:focus {
+  outline: none;
+}
+
+.input::placeholder {
+  color: #9aa7ca;
+}
+
+.sendButton {
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(90deg, #78b0ff 0%, #97d3ff 100%);
+  color: #091626;
+  font-weight: 600;
+  padding: 11px 16px;
+  cursor: pointer;
+}
+
+.sendButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

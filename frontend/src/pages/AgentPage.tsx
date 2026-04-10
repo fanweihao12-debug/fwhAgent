@@ -1,6 +1,14 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createAgent, deleteAgent, fetchAgentExecutions, fetchAgentList, streamAgentChat } from '../api/agent';
+import {
+  createAgent,
+  deleteAgent,
+  fetchAgentExecutions,
+  fetchAgentList,
+  fetchKnowledgeIngestJob,
+  streamAgentChat,
+  uploadKnowledgePdf
+} from '../api/agent';
 import { AgentSidebar } from '../components/AgentSidebar';
 import { ChatComposer } from '../components/ChatComposer';
 import { ChatMessage } from '../components/ChatMessage';
@@ -24,6 +32,8 @@ const createMessage = (
 });
 
 const AGENT_NAME_MAX_LENGTH = 120;
+const PDF_UPLOAD_MAX_SIZE_BYTES = 20 * 1024 * 1024;
+const JOB_POLL_INTERVAL_MS = 2000;
 
 const normalizeAgentName = (prompt: string): string => {
   const trimmedPrompt = prompt.trim();
@@ -104,6 +114,12 @@ export const AgentPage = () => {
   const queryClient = useQueryClient();
   const [isStreaming, setIsStreaming] = useState(false);
   const [isCreatingNewChat, setIsCreatingNewChat] = useState(false);
+  const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const [knowledgeStatusText, setKnowledgeStatusText] = useState('');
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
+  const isPollingRef = useRef(false);
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
@@ -166,6 +182,16 @@ export const AgentPage = () => {
       setSelectedAgentId(agents[0].id);
     }
   }, [agents, isCreatingNewChat, selectedAgentId, setSelectedAgentId]);
+
+  useEffect(
+    () => () => {
+      if (pollTimerRef.current !== null) {
+        window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    },
+    []
+  );
 
   const currentMessages = selectedAgentId ? messagesByAgentId[selectedAgentId] ?? [] : [];
 
@@ -280,7 +306,92 @@ export const AgentPage = () => {
     void queryClient.invalidateQueries({ queryKey: ['agents'] });
   };
 
-  const isBusy = isStreaming || createAgentMutation.isPending;
+  const clearJobPollTimer = (): void => {
+    if (pollTimerRef.current !== null) {
+      window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  };
+
+  const startPollingKnowledgeJob = (agentId: string, jobId: string): void => {
+    clearJobPollTimer();
+    isPollingRef.current = false;
+
+    pollTimerRef.current = window.setInterval(() => {
+      if (isPollingRef.current) {
+        return;
+      }
+
+      isPollingRef.current = true;
+      void fetchKnowledgeIngestJob(agentId, jobId)
+        .then((job) => {
+          if (job.status === 'success') {
+            clearJobPollTimer();
+            setKnowledgeStatusText(`PDF已入库，切片数：${job.chunk_count ?? 0}`);
+            return;
+          }
+
+          if (job.status === 'failed') {
+            clearJobPollTimer();
+            setKnowledgeStatusText(`PDF入库失败：${job.error_message ?? '未知错误'}`);
+            return;
+          }
+
+          setKnowledgeStatusText(`PDF处理中（状态：${job.status}）...`);
+        })
+        .catch((error) => {
+          clearJobPollTimer();
+          const messageText = error instanceof Error ? error.message : '轮询任务状态失败';
+          setKnowledgeStatusText(messageText);
+        })
+        .finally(() => {
+          isPollingRef.current = false;
+        });
+    }, JOB_POLL_INTERVAL_MS);
+  };
+
+  const onClickUploadPdf = (): void => {
+    if (!selectedAgentId) {
+      setKnowledgeStatusText('请先选择一个对话，再上传PDF。');
+      return;
+    }
+
+    fileInputRef.current?.click();
+  };
+
+  const onSelectPdfFile = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const selectedFile = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!selectedFile) {
+      return;
+    }
+
+    if (!selectedAgentId) {
+      setKnowledgeStatusText('请先选择一个对话，再上传PDF。');
+      return;
+    }
+
+    if (selectedFile.size > PDF_UPLOAD_MAX_SIZE_BYTES) {
+      setKnowledgeStatusText('PDF文件大小不能超过20MB。');
+      return;
+    }
+
+    setIsUploadingPdf(true);
+    setKnowledgeStatusText('PDF上传中...');
+    try {
+      const uploadResult = await uploadKnowledgePdf(selectedAgentId, selectedFile);
+      setKnowledgeStatusText(`PDF上传成功，任务已入队（${uploadResult.job_id}），正在处理...`);
+      startPollingKnowledgeJob(selectedAgentId, uploadResult.job_id);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'PDF上传失败';
+      setKnowledgeStatusText(messageText);
+    } finally {
+      setIsUploadingPdf(false);
+    }
+  };
+
+  const isBusy = isStreaming || createAgentMutation.isPending || isUploadingPdf;
 
   const onStartNewChat = (): void => {
     setIsCreatingNewChat(true);
@@ -308,6 +419,24 @@ export const AgentPage = () => {
       <section className={styles.wrap}>
         <header className={styles.titleBar}>
           <h2 className={styles.title}>What can the Agent help with today?</h2>
+          <div className={styles.knowledgeToolbar}>
+            <input
+              ref={fileInputRef}
+              className={styles.hiddenFileInput}
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={(event) => void onSelectPdfFile(event)}
+            />
+            <button
+              className={styles.uploadButton}
+              type="button"
+              disabled={isUploadingPdf || !selectedAgentId}
+              onClick={onClickUploadPdf}
+            >
+              {isUploadingPdf ? '上传中...' : '上传PDF'}
+            </button>
+            {knowledgeStatusText ? <p className={styles.knowledgeStatus}>{knowledgeStatusText}</p> : null}
+          </div>
         </header>
 
         <div className={styles.conversation}>
@@ -325,8 +454,3 @@ export const AgentPage = () => {
     </AgentLayout>
   );
 };
-
-
-
-
-

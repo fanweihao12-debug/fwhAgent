@@ -1,11 +1,18 @@
 from functools import partial
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Response, status
+from aio_pika.exceptions import AMQPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app.db import Base, SessionLocal, engine, get_db
+from app.knowledge_ingest_service import (
+    get_pdf_upload_max_size_bytes,
+    read_upload_file_with_limit,
+    validate_pdf_upload_metadata,
+)
+from app.knowledge_queue import publish_pdf_ingest_job
 from app.langchain_agent_service import (
     build_augmented_prompt,
     ensure_vector_store_schema,
@@ -17,7 +24,7 @@ from app.langchain_agent_service import (
     rewrite_query_for_retrieval,
 )
 from app.llm_service import invoke_deepseek_chat, stream_deepseek_chat
-from app.models import Agent, ChatTurn, Execution
+from app.models import Agent, ChatTurn, Execution, KnowledgeIngestJob, KnowledgeIngestPayload
 from app.schemas import (
     AgentCreate,
     AgentOut,
@@ -25,6 +32,8 @@ from app.schemas import (
     ExecutionOut,
     KnowledgeDocumentCreate,
     KnowledgeDocumentOut,
+    KnowledgeIngestJobOut,
+    KnowledgePdfUploadOut,
     RunAgentInput,
 )
 from app.streaming_utils import create_streaming_response, stream_execution_chunks
@@ -122,6 +131,9 @@ def delete_agent(agent_id: str, db: Session = Depends(get_db)):
 
     db.query(Execution).filter(Execution.agent_id == agent_id).delete(synchronize_session=False)
     db.query(ChatTurn).filter(ChatTurn.agent_id == agent_id).delete(synchronize_session=False)
+    db.query(KnowledgeIngestJob).filter(KnowledgeIngestJob.agent_id == agent_id).delete(
+        synchronize_session=False
+    )
     db.delete(agent)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -145,6 +157,71 @@ def add_knowledge_document(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return KnowledgeDocumentOut(document_id=document_id, chunk_count=chunk_count)
+
+
+@app.post(
+    "/agents/{agent_id}/knowledge/pdf",
+    response_model=KnowledgePdfUploadOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def enqueue_pdf_knowledge_ingest(
+    agent_id: str,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+):
+    agent = db.get(Agent, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    normalized_file_name = validate_pdf_upload_metadata(file.filename, file.content_type)
+
+    try:
+        max_size_bytes = get_pdf_upload_max_size_bytes()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        payload_bytes = await read_upload_file_with_limit(file, max_size_bytes=max_size_bytes)
+    finally:
+        await file.close()
+
+    ingest_job = KnowledgeIngestJob(
+        agent_id=agent_id,
+        source_type="pdf",
+        file_name=normalized_file_name,
+        file_size=len(payload_bytes),
+        title=title.strip() if isinstance(title, str) and title.strip() else None,
+        status="pending",
+    )
+    db.add(ingest_job)
+    db.flush()
+
+    db.add(KnowledgeIngestPayload(job_id=ingest_job.id, payload_bytes=payload_bytes))
+    db.commit()
+    db.refresh(ingest_job)
+
+    try:
+        await publish_pdf_ingest_job(ingest_job.id)
+    except (AMQPException, OSError, RuntimeError, ValueError) as exc:
+        payload = db.get(KnowledgeIngestPayload, ingest_job.id)
+        ingest_job.status = "failed"
+        ingest_job.error_message = f"Queue publish failed: {exc}"
+        ingest_job.finished_at = datetime.now(timezone.utc)
+        if payload is not None:
+            db.delete(payload)
+        db.commit()
+        raise HTTPException(status_code=503, detail="Failed to enqueue knowledge ingest job.") from exc
+
+    return KnowledgePdfUploadOut(job_id=ingest_job.id, status=ingest_job.status)
+
+
+@app.get("/agents/{agent_id}/knowledge/jobs/{job_id}", response_model=KnowledgeIngestJobOut)
+def get_knowledge_ingest_job(agent_id: str, job_id: str, db: Session = Depends(get_db)):
+    ingest_job = db.get(KnowledgeIngestJob, job_id)
+    if not ingest_job or ingest_job.agent_id != agent_id:
+        raise HTTPException(status_code=404, detail="Knowledge ingest job not found")
+    return ingest_job
 
 
 @app.post("/agents/{agent_id}/run", response_model=ExecutionOut)
@@ -271,6 +348,8 @@ def chat_with_memory_and_retrieval(
             "chunk_id": chunk.chunk_id,
             "score": round(chunk.score, 4),
             "content_preview": chunk.content[:180],
+            "file_name": chunk.metadata.get("file_name"),
+            "page": chunk.metadata.get("page"),
             "metadata": chunk.metadata,
         }
         for chunk in retrieved_chunks

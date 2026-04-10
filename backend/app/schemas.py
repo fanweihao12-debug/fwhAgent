@@ -51,6 +51,29 @@ class KnowledgeDocumentOut(BaseModel):
     chunk_count: int
 
 
+class KnowledgePdfUploadOut(BaseModel):
+    job_id: str
+    status: str
+
+
+class KnowledgeIngestJobOut(BaseModel):
+    id: str
+    agent_id: str
+    source_type: str
+    file_name: str
+    file_size: int
+    title: str | None
+    status: str
+    chunk_count: int | None
+    error_message: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
 class ChatStreamInput(BaseModel):
     message: str = Field(min_length=1)
     top_k: int = Field(default=4, ge=1, le=12)

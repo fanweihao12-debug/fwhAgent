@@ -17,6 +17,26 @@ export interface ExecutionResult {
   finished_at: string | null;
 }
 
+export interface KnowledgePdfUploadResult {
+  job_id: string;
+  status: 'pending' | 'running' | 'success' | 'failed';
+}
+
+export interface KnowledgeIngestJob {
+  id: string;
+  agent_id: string;
+  source_type: string;
+  file_name: string;
+  file_size: number;
+  title: string | null;
+  status: 'pending' | 'running' | 'success' | 'failed';
+  chunk_count: number | null;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export interface MessageItem {
   id: string;
   role: 'user' | 'assistant' | 'system';

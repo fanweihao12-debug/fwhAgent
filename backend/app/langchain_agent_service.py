@@ -2,12 +2,16 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -176,6 +180,108 @@ def create_remote_text_embedding(text_value: str) -> list[float]:
         raise ValueError("Embedding vector is missing or invalid.")
 
     return [float(item) for item in embedding]
+
+
+def extract_pdf_page_texts(pdf_bytes: bytes) -> list[tuple[int, str]]:
+    """Extract non-empty page texts from a PDF byte payload."""
+    if len(pdf_bytes) == 0:
+        raise ValueError("PDF payload is empty.")
+
+    try:
+        reader = PdfReader(BytesIO(pdf_bytes))
+    except (PdfReadError, ValueError) as exc:
+        raise ValueError("Invalid or corrupted PDF file.") from exc
+
+    page_texts: list[tuple[int, str]] = []
+    for page_number, page in enumerate(reader.pages, start=1):
+        extracted_text = page.extract_text()
+        normalized_text = extracted_text.strip() if isinstance(extracted_text, str) else ""
+        if normalized_text:
+            page_texts.append((page_number, normalized_text))
+
+    if len(page_texts) == 0:
+        raise ValueError("No readable text extracted from PDF.")
+
+    return page_texts
+
+
+def ingest_pdf_document(
+    db_session: Session,
+    agent_id: str,
+    file_name: str,
+    pdf_bytes: bytes,
+    title: str | None = None,
+    commit: bool = True,
+) -> tuple[str, int]:
+    """Parse PDF bytes, create chunks, and store them in pgvector with PDF metadata."""
+    page_texts = extract_pdf_page_texts(pdf_bytes)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=int(os.getenv("RAG_CHUNK_SIZE", "900")),
+        chunk_overlap=int(os.getenv("RAG_CHUNK_OVERLAP", "120")),
+    )
+
+    normalized_file_name = Path(file_name).name
+    document_title = title.strip() if isinstance(title, str) and title.strip() else None
+    if document_title is None:
+        document_title = Path(normalized_file_name).stem
+
+    document = KnowledgeDocument(
+        agent_id=agent_id,
+        title=document_title,
+        source=normalized_file_name,
+        metadata_json={
+            "source_type": "pdf",
+            "file_name": normalized_file_name,
+        },
+    )
+    db_session.add(document)
+    db_session.flush()
+
+    chunk_count = 0
+    for page_number, page_text in page_texts:
+        page_chunks = splitter.split_text(page_text)
+        for chunk_text in page_chunks:
+            normalized_chunk = chunk_text.strip()
+            if len(normalized_chunk) == 0:
+                continue
+
+            embedding = create_text_embedding(normalized_chunk)
+            metadata = {
+                "source_type": "pdf",
+                "file_name": normalized_file_name,
+                "page": page_number,
+                "chunk_index": chunk_count,
+                "title": document_title,
+            }
+            db_session.execute(
+                text(
+                    """
+                    INSERT INTO knowledge_chunks (
+                        id, agent_id, document_id, chunk_index, content, metadata_json, embedding
+                    ) VALUES (
+                        :id, :agent_id, :document_id, :chunk_index, :content, CAST(:metadata_json AS jsonb), CAST(:embedding AS vector)
+                    );
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "agent_id": agent_id,
+                    "document_id": document.id,
+                    "chunk_index": chunk_count,
+                    "content": normalized_chunk,
+                    "metadata_json": json.dumps(metadata, ensure_ascii=False),
+                    "embedding": embedding_to_vector_literal(embedding),
+                },
+            )
+            chunk_count += 1
+
+    if chunk_count == 0:
+        raise ValueError("PDF text cannot be split into valid chunks.")
+
+    if commit:
+        db_session.commit()
+
+    return document.id, chunk_count
 
 
 def ingest_knowledge_document(

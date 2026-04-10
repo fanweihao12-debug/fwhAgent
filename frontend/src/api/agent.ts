@@ -1,5 +1,5 @@
 import { API_BASE_URL, requestJson } from './client';
-import type { Agent, ExecutionResult } from '../types/agent';
+import type { Agent, ExecutionResult, KnowledgeIngestJob, KnowledgePdfUploadResult } from '../types/agent';
 
 interface CreateAgentPayload {
   name: string;
@@ -12,7 +12,7 @@ interface RunAgentPayload {
 
 interface StreamCallbacks {
   onDelta: (chunk: string) => void;
-  onDone?: () => void;
+  onDone?: (payload: { references?: Array<Record<string, unknown>> }) => void;
 }
 
 interface ChatStreamPayload {
@@ -121,7 +121,7 @@ export const streamRunAgent = async (
     }
 
     if (eventName === 'done') {
-      callbacks.onDone?.();
+      callbacks.onDone?.({ references: Array.isArray(dataPayload.references) ? dataPayload.references : undefined });
     }
   };
 
@@ -213,7 +213,7 @@ export const streamAgentChat = async (
     }
 
     if (eventName === 'done') {
-      callbacks.onDone?.();
+      callbacks.onDone?.({ references: Array.isArray(dataPayload.references) ? dataPayload.references : undefined });
     }
   };
 
@@ -247,3 +247,30 @@ export const uploadKnowledgeDocument = async (
     method: 'POST',
     bodyJson: payload
   });
+
+export const uploadKnowledgePdf = async (
+  agentId: string,
+  file: File,
+  title?: string
+): Promise<KnowledgePdfUploadResult> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (title && title.trim().length > 0) {
+    formData.append('title', title.trim());
+  }
+
+  const response = await fetch(`${API_BASE_URL}/agents/${agentId}/knowledge/pdf`, {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Request failed with status ${response.status}`);
+  }
+
+  return (await response.json()) as KnowledgePdfUploadResult;
+};
+
+export const fetchKnowledgeIngestJob = async (agentId: string, jobId: string): Promise<KnowledgeIngestJob> =>
+  requestJson<KnowledgeIngestJob>(`/agents/${agentId}/knowledge/jobs/${jobId}`);

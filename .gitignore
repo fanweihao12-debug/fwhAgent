@@ -13,6 +13,10 @@ frontend/dist/
 frontend/dev.out.log
 frontend/dev.err.log
 
+# Runtime logs
+backend/*.log
+frontend/*.log
+
 # Env files
 .env
 backend/.env
